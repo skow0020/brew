@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="brew Brewing homepage preview">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f1b18" />
+      <stop offset="1" stop-color="#a14318" />
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#bg)" />
+  <rect x="48" y="48" width="1104" height="534" fill="none" stroke="#f9f4e8" stroke-width="4" rx="20" />
+  <text x="90" y="220" fill="#fffaf0" font-family="Segoe UI, sans-serif" font-size="56" font-weight="700">brew Brewing Co.</text>
+  <text x="90" y="300" fill="#f2ede2" font-family="Segoe UI, sans-serif" font-size="44">Fresh beer. Great people.</text>
+  <text x="90" y="380" fill="#f2ede2" font-family="Segoe UI, sans-serif" font-size="44">Zero pretense.</text>
+  <text x="90" y="500" fill="#fffaf0" font-family="Segoe UI, sans-serif" font-size="30">Hopkins, MN</text>
+</svg>
