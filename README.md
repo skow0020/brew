@@ -84,6 +84,13 @@ npm run dev
 
 The browser only calls /api/admin/beers. CMS write credentials remain server-side in the admin API process.
 
+For Strapi performance and compatibility, point admin CMS URLs to the beers collection endpoint (not the project root URL):
+
+- CMS_CONTENT_URL=https://your-strapi-domain/api/beers
+- CMS_WRITE_API_URL=https://your-strapi-domain/api/beers
+
+The admin API optimizes beer reads by requesting only beer fields with pagination when this endpoint is used.
+
 Route-level SEO is configured in src/lib/seo/useSeo.ts and page-specific JSON-LD schemas in src/lib/seo/schemas.ts.
 Route-level social preview images are located in public/og-*.svg and attached through each page's useSeo configuration.
 

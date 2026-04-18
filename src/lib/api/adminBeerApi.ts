@@ -2,8 +2,12 @@ import type { Beer } from '../../data/siteData'
 import { appConfig } from '../config'
 import { fetchJson } from './http'
 
+export type AdminBeer = Beer & {
+  cmsId?: number | string
+}
+
 type AdminBeersResponse = {
-  beers: Beer[]
+  beers: AdminBeer[]
 }
 
 type SaveAdminBeersResponse = {
@@ -18,7 +22,7 @@ function getAdminApiUrl(path: string): string {
   return `${base}${path}`
 }
 
-export async function getAdminBeers(adminKey: string): Promise<Beer[]> {
+export async function getAdminBeers(adminKey: string): Promise<AdminBeer[]> {
   const response = await fetchJson<AdminBeersResponse>(getAdminApiUrl('/beers'), {
     headers: {
       'x-admin-key': adminKey,

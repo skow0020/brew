@@ -14,11 +14,23 @@ import {
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMemo, useState } from 'react'
 import { fallbackSiteContent, type Beer } from '../data/siteData'
-import { getAdminBeers, saveAdminBeers } from '../lib/api/adminBeerApi'
+import { type AdminBeer, getAdminBeers, saveAdminBeers } from '../lib/api/adminBeerApi'
 import { queryKeys } from '../lib/content/queryKeys'
 
-function emptyBeer(): Beer {
+type EditableBeer = AdminBeer & {
+  rowId: string
+}
+
+let editableBeerRowCounter = 0
+
+function nextEditableBeerRowId(): string {
+  editableBeerRowCounter += 1
+  return `beer-row-${editableBeerRowCounter}`
+}
+
+function emptyBeer(): EditableBeer {
   return {
+    rowId: nextEditableBeerRowId(),
     name: '',
     style: '',
     abv: '',
@@ -27,8 +39,10 @@ function emptyBeer(): Beer {
   }
 }
 
-function normalizeEditableBeers(beers: Beer[]): Beer[] {
+function normalizeEditableBeers(beers: AdminBeer[]): EditableBeer[] {
   return beers.map((beer) => ({
+    rowId: nextEditableBeerRowId(),
+    cmsId: beer.cmsId,
     name: beer.name,
     style: beer.style,
     abv: beer.abv,
@@ -41,7 +55,7 @@ export function AdminBeersPage() {
   const [adminKeyInput, setAdminKeyInput] = useState('')
   const [adminKey, setAdminKey] = useState('')
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
-  const [editableBeers, setEditableBeers] = useState<Beer[]>(fallbackSiteContent.beers)
+  const [editableBeers, setEditableBeers] = useState<EditableBeer[]>(() => normalizeEditableBeers(fallbackSiteContent.beers))
   const queryClient = useQueryClient()
 
   const beersQuery = useQuery({
@@ -85,12 +99,12 @@ export function AdminBeersPage() {
     })
   }
 
-  function updateBeer(index: number, patch: Partial<Beer>) {
-    setEditableBeers((current) => current.map((beer, row) => (row === index ? { ...beer, ...patch } : beer)))
+  function updateBeer(rowId: string, patch: Partial<AdminBeer>) {
+    setEditableBeers((current) => current.map((beer) => (beer.rowId === rowId ? { ...beer, ...patch } : beer)))
   }
 
-  function removeBeer(index: number) {
-    setEditableBeers((current) => current.filter((_, row) => row !== index))
+  function removeBeer(rowId: string) {
+    setEditableBeers((current) => current.filter((beer) => beer.rowId !== rowId))
   }
 
   function addBeer() {
@@ -100,12 +114,13 @@ export function AdminBeersPage() {
   function handleSave() {
     setSaveMessage(null)
     const cleaned = editableBeers
-      .map((beer) => ({
-        ...beer,
+      .map((beer): AdminBeer => ({
+        cmsId: beer.cmsId,
         name: beer.name.trim(),
         style: beer.style.trim(),
         abv: beer.abv.trim(),
         notes: beer.notes.trim(),
+        onTap: beer.onTap,
       }))
       .filter((beer) => beer.name && beer.style)
 
@@ -161,26 +176,26 @@ export function AdminBeersPage() {
       </Card>
 
       <Stack spacing={1.25}>
-        {editableBeers.map((beer, index) => (
-          <Card key={`${beer.name}-${index}`}>
+        {editableBeers.map((beer) => (
+          <Card key={beer.rowId}>
             <CardContent>
               <Stack direction={{ xs: 'column', md: 'row' }} spacing={1}>
                 <TextField
                   label="Name"
                   value={beer.name}
-                  onChange={(event) => updateBeer(index, { name: event.target.value })}
+                  onChange={(event) => updateBeer(beer.rowId, { name: event.target.value })}
                   fullWidth
                 />
                 <TextField
                   label="Style"
                   value={beer.style}
-                  onChange={(event) => updateBeer(index, { style: event.target.value })}
+                  onChange={(event) => updateBeer(beer.rowId, { style: event.target.value })}
                   fullWidth
                 />
                 <TextField
                   label="ABV"
                   value={beer.abv}
-                  onChange={(event) => updateBeer(index, { abv: event.target.value })}
+                  onChange={(event) => updateBeer(beer.rowId, { abv: event.target.value })}
                   fullWidth
                 />
               </Stack>
@@ -188,14 +203,14 @@ export function AdminBeersPage() {
                 <TextField
                   label="Notes"
                   value={beer.notes}
-                  onChange={(event) => updateBeer(index, { notes: event.target.value })}
+                  onChange={(event) => updateBeer(beer.rowId, { notes: event.target.value })}
                   fullWidth
                 />
                 <TextField
                   select
                   label="Tap status"
                   value={beer.onTap ? 'on' : 'off'}
-                  onChange={(event) => updateBeer(index, { onTap: event.target.value === 'on' })}
+                  onChange={(event) => updateBeer(beer.rowId, { onTap: event.target.value === 'on' })}
                   fullWidth
                   slotProps={{ select: { native: true } }}
                 >
@@ -205,7 +220,7 @@ export function AdminBeersPage() {
                 <Button
                   variant="outlined"
                   color="error"
-                  onClick={() => removeBeer(index)}
+                  onClick={() => removeBeer(beer.rowId)}
                   startIcon={<DeleteOutlineRoundedIcon />}
                 >
                   Remove

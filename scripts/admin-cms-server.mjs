@@ -62,6 +62,33 @@ const env = {
   cmsWriteMethod: (readEnv('CMS_WRITE_METHOD') || 'PUT').toUpperCase(),
 }
 
+const CMS_BEER_FIELDS = ['name', 'style', 'abv', 'notes', 'onTap']
+
+function resolveCmsEndpoint(urlValue) {
+  if (!urlValue) {
+    return ''
+  }
+
+  let url
+  try {
+    url = new URL(urlValue)
+  } catch {
+    return urlValue
+  }
+
+  const normalizedPath = url.pathname.replace(/\/+$/, '') || '/'
+
+  if (normalizedPath === '/' || normalizedPath === '/api') {
+    url.pathname = '/api/beers'
+    return url.toString()
+  }
+
+  return url.toString()
+}
+
+const resolvedCmsContentUrl = resolveCmsEndpoint(env.cmsContentUrl)
+const resolvedCmsWriteUrl = resolveCmsEndpoint(env.cmsWriteUrl)
+
 function json(response, status, body) {
   response.writeHead(status, {
     'Content-Type': 'application/json',
@@ -88,7 +115,88 @@ function extractData(payload) {
   return payload
 }
 
+function isRecord(value) {
+  return Boolean(value) && typeof value === 'object'
+}
+
+function appendStrapiBeerQuery(urlValue) {
+  const url = new URL(urlValue)
+
+  if (!url.pathname.includes('/api/beers')) {
+    return urlValue
+  }
+
+  if (!url.searchParams.has('pagination[pageSize]')) {
+    url.searchParams.set('pagination[pageSize]', '200')
+  }
+
+  for (let index = 0; index < CMS_BEER_FIELDS.length; index += 1) {
+    url.searchParams.set(`fields[${index}]`, CMS_BEER_FIELDS[index])
+  }
+
+  return url.toString()
+}
+
+function normalizeBeer(value) {
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const name = typeof value.name === 'string' ? value.name : ''
+  const style = typeof value.style === 'string' ? value.style : ''
+
+  if (!name || !style) {
+    return null
+  }
+
+  return {
+    cmsId: value.cmsId ?? value.documentId ?? value.id,
+    name,
+    style,
+    abv: typeof value.abv === 'string' ? value.abv : '',
+    notes: typeof value.notes === 'string' ? value.notes : '',
+    onTap: typeof value.onTap === 'boolean' ? value.onTap : false,
+  }
+}
+
+function isStrapiCollectionPayload(payload) {
+  return Array.isArray(payload?.data)
+}
+
+function extractStrapiBeerEntries(payload) {
+  if (!isStrapiCollectionPayload(payload)) {
+    return []
+  }
+
+  return payload.data
+    .filter(isRecord)
+    .map((entry) => {
+      const attrs = isRecord(entry.attributes) ? entry.attributes : entry
+      const beer = normalizeBeer(attrs)
+
+      if (!beer) {
+        return null
+      }
+
+      return {
+        cmsId: entry.documentId ?? beer.cmsId ?? entry.id,
+        ...beer,
+      }
+    })
+    .filter(Boolean)
+}
+
+function beerKey(beer) {
+  return `${beer.name.trim().toLowerCase()}::${beer.style.trim().toLowerCase()}`
+}
+
 function extractBeers(payload) {
+  const strapiEntries = extractStrapiBeerEntries(payload)
+
+  if (strapiEntries.length > 0) {
+    return strapiEntries
+  }
+
   const data = extractData(payload)
   const candidates = [data.beers, data.taproomBeers, data.tapList?.beers, data.tapList?.items]
 
@@ -145,11 +253,11 @@ function parseBody(request) {
 }
 
 async function fetchCmsContent() {
-  if (!env.cmsContentUrl) {
+  if (!resolvedCmsContentUrl) {
     throw new Error('CMS_CONTENT_URL is not configured')
   }
 
-  if (env.cmsContentUrl.includes('example.com')) {
+  if (resolvedCmsContentUrl.includes('example.com')) {
     throw new Error('CMS_CONTENT_URL still points to example.com. Set a real CMS endpoint in .env.')
   }
 
@@ -163,10 +271,10 @@ async function fetchCmsContent() {
 
   let response
   try {
-    response = await fetch(env.cmsContentUrl, { headers })
+    response = await fetch(appendStrapiBeerQuery(resolvedCmsContentUrl), { headers })
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'network error'
-    throw new Error(`Could not reach CMS_CONTENT_URL (${env.cmsContentUrl}): ${reason}`)
+    throw new Error(`Could not reach CMS_CONTENT_URL (${resolvedCmsContentUrl}): ${reason}`)
   }
 
   if (!response.ok) {
@@ -177,7 +285,7 @@ async function fetchCmsContent() {
 }
 
 async function writeCmsContent(payload) {
-  if (!env.cmsWriteUrl) {
+  if (!resolvedCmsWriteUrl) {
     throw new Error('CMS_WRITE_API_URL is not configured')
   }
 
@@ -189,7 +297,7 @@ async function writeCmsContent(payload) {
     headers.Authorization = `Bearer ${env.cmsWriteToken}`
   }
 
-  const response = await fetch(env.cmsWriteUrl, {
+  const response = await fetch(resolvedCmsWriteUrl, {
     method: env.cmsWriteMethod,
     headers,
     body: JSON.stringify(payload),
@@ -198,6 +306,108 @@ async function writeCmsContent(payload) {
   if (!response.ok) {
     const details = await response.text()
     throw new Error(`CMS write failed (${response.status}): ${details || 'No details'}`)
+  }
+}
+
+async function writeStrapiBeerCollection(nextBeers) {
+  if (!resolvedCmsWriteUrl || !resolvedCmsWriteUrl.includes('/api/beers')) {
+    throw new Error('CMS_WRITE_API_URL must point to a Strapi beers endpoint like .../api/beers')
+  }
+
+  const currentPayload = await fetchCmsContent()
+  const currentEntries = extractStrapiBeerEntries(currentPayload)
+  const currentByKey = new Map(currentEntries.map((entry) => [beerKey(entry), entry]))
+  const currentById = new Map(
+    currentEntries
+      .filter((entry) => entry.cmsId !== undefined && entry.cmsId !== null)
+      .map((entry) => [String(entry.cmsId), entry]),
+  )
+
+  const nextByKey = new Map(nextBeers.map((beer) => [beerKey(beer), beer]))
+  const nextIds = new Set(
+    nextBeers
+      .map((beer) => beer.cmsId)
+      .filter((id) => id !== undefined && id !== null)
+      .map((id) => String(id)),
+  )
+
+  const nextKeysWithoutId = new Set(
+    nextBeers
+      .filter((beer) => beer.cmsId === undefined || beer.cmsId === null)
+      .map((beer) => beerKey(beer)),
+  )
+
+  const headers = {
+    'Content-Type': 'application/json',
+  }
+
+  if (env.cmsWriteToken) {
+    headers.Authorization = `Bearer ${env.cmsWriteToken}`
+  }
+
+  for (const nextBeer of nextBeers) {
+    const cmsId = nextBeer.cmsId !== undefined && nextBeer.cmsId !== null
+      ? String(nextBeer.cmsId)
+      : null
+    const key = beerKey(nextBeer)
+    const currentFromId = cmsId ? currentById.get(cmsId) : null
+    const current = currentFromId ?? currentByKey.get(key)
+    const payload = {
+      name: nextBeer.name,
+      style: nextBeer.style,
+      abv: nextBeer.abv,
+      notes: nextBeer.notes,
+      onTap: nextBeer.onTap,
+    }
+
+    if (current && current.cmsId !== undefined && current.cmsId !== null) {
+      const response = await fetch(`${resolvedCmsWriteUrl.replace(/\/$/, '')}/${current.cmsId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ data: payload }),
+      })
+
+      if (!response.ok) {
+        const details = await response.text()
+        throw new Error(`CMS update failed (${response.status}): ${details || 'No details'}`)
+      }
+
+      continue
+    }
+
+    const createResponse = await fetch(resolvedCmsWriteUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ data: payload }),
+    })
+
+    if (!createResponse.ok) {
+      const details = await createResponse.text()
+      throw new Error(`CMS create failed (${createResponse.status}): ${details || 'No details'}`)
+    }
+  }
+
+  for (const current of currentEntries) {
+    if (current.cmsId === undefined || current.cmsId === null) {
+      continue
+    }
+
+    const currentId = String(current.cmsId)
+    const key = beerKey(current)
+
+    if (nextIds.has(currentId) || nextKeysWithoutId.has(key) || nextByKey.has(key)) {
+      continue
+    }
+
+    const deleteResponse = await fetch(`${resolvedCmsWriteUrl.replace(/\/$/, '')}/${current.cmsId}`, {
+      method: 'DELETE',
+      headers,
+    })
+
+    if (!deleteResponse.ok) {
+      const details = await deleteResponse.text()
+      throw new Error(`CMS delete failed (${deleteResponse.status}): ${details || 'No details'}`)
+    }
   }
 }
 
@@ -232,7 +442,9 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'PUT') {
       const body = await parseBody(request)
-      const beers = Array.isArray(body.beers) ? body.beers : null
+      const beers = Array.isArray(body.beers)
+        ? body.beers.map(normalizeBeer).filter(Boolean)
+        : null
 
       if (!beers) {
         json(response, 400, { ok: false, message: 'Request body must include beers array' })
@@ -240,8 +452,14 @@ const server = http.createServer(async (request, response) => {
       }
 
       const current = await fetchCmsContent()
-      const merged = mergeContent(current, beers)
-      await writeCmsContent(merged)
+
+      if (isStrapiCollectionPayload(current)) {
+        await writeStrapiBeerCollection(beers)
+      } else {
+        const merged = mergeContent(current, beers)
+        await writeCmsContent(merged)
+      }
+
       json(response, 200, { ok: true, message: 'Beer catalog saved to CMS.' })
       return
     }
